@@ -38,9 +38,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "👋 Привет! Отправь свою cookie (например, `college_session=...; XSRF-TOKEN=...`), "
-        "и я покажу твои оценки.
-
-"
+        "и я покажу твои оценки."
         "Если не знаешь, как получить cookie — нажми кнопку ниже 👇",
         parse_mode="Markdown",
         reply_markup=reply_markup
