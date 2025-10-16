@@ -1,98 +1,128 @@
 import os
-import json
 import asyncio
+import json
 from flask import Flask, request
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from parser import get_journal_with_cookie, extract_grades_from_html
 
-# --- Настройки ---
+# ==============================
+# 🔧 НАСТРОЙКИ
+# ==============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-APP_URL = os.getenv("APP_URL")
+APP_URL = os.getenv("APP_URL")  # пример: https://botalive.onrender.com
 
 if not BOT_TOKEN or not APP_URL:
-    raise ValueError("❌ BOT_TOKEN или APP_URL не заданы!")
+    raise ValueError("❌ BOT_TOKEN или APP_URL не заданы в переменных окружения!")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+app = Flask(__name__)
 
 COOKIE_FILE = "cookies.json"
+
+# ==============================
+# 💾 Работа с cookies
+# ==============================
 if not os.path.exists(COOKIE_FILE):
     with open(COOKIE_FILE, "w") as f:
         json.dump({}, f)
 
-# --- Cookie helper ---
+
 def save_cookie(user_id, cookie):
-    with open(COOKIE_FILE, "r+", encoding="utf-8") as f:
+    """Сохраняет cookie пользователя"""
+    with open(COOKIE_FILE, "r+") as f:
         data = json.load(f)
         data[str(user_id)] = cookie
         f.seek(0)
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        json.dump(data, f, indent=2)
         f.truncate()
 
+
 def load_cookie(user_id):
-    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+    """Загружает cookie пользователя"""
+    with open(COOKIE_FILE, "r") as f:
         data = json.load(f)
         return data.get(str(user_id))
 
-# --- Aiogram handlers ---
+
+# ==============================
+# 💬 Telegram-хэндлеры
+# ==============================
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
     await message.answer(
-        "👋 Привет!\n"
-        "Отправь мне свои cookies (например, `college_session=...; XSRF-TOKEN=...`), "
-        "и я покажу твои оценки.\n\n"
-        "Если не знаешь, как их получить — скоро появится инструкция 🔧",
+        "👋 Привет!\n\n"
+        "Этот бот показывает твои оценки с сайта *college.snation.kz*.\n\n"
+        "📋 Отправь свою cookie строку в виде:\n"
+        "`college_session=...; XSRF-TOKEN=...`\n\n"
+        "⚙️ В разработке разработчиком",
         parse_mode="Markdown"
     )
 
+
 @dp.message()
 async def handle_cookie(message: types.Message):
+    """Обработка введённой cookie"""
     user_id = message.from_user.id
-    cookie_string = message.text.strip()
+    cookie = message.text.strip()
 
-    await message.answer("🔐 Cookie получена, проверяю...")
+    if "college_session=" not in cookie:
+        await message.answer("⚠️ Неверный формат cookie. Пример:\n`college_session=...; XSRF-TOKEN=...`", parse_mode="Markdown")
+        return
 
-    save_cookie(user_id, cookie_string)
-    html = await get_journal_with_cookie(cookie_string)
+    save_cookie(user_id, cookie)
+    await message.answer("✅ Cookie сохранена! Загружаю журнал...")
 
+    html = await get_journal_with_cookie(cookie)
     if not html:
-        await message.answer("❌ Cookie неверна или устарела.")
+        await message.answer("❌ Не удалось войти. Проверь cookie — возможно, она устарела.")
         return
 
     grades = extract_grades_from_html(html)
-    if not grades:
-        await message.answer("⚠️ Оценки не найдены.")
-    else:
-        await message.answer(grades, parse_mode="Markdown")
+    await message.answer(grades, parse_mode="Markdown")
 
-# --- Flask сервер ---
-flask_app = Flask(__name__)
 
-@flask_app.route("/")
-def home():
-    return "<h1>🤖 Бот работает на Render!</h1>", 200
+# ==============================
+# 🌐 Flask веб-сервер (Webhook)
+# ==============================
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
 
-@flask_app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
-async def webhook():
+
+@app.route(f"/webhook/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    """Приём обновлений от Telegram"""
     data = request.get_json(force=True)
     update = types.Update(**data)
 
-    # Вместо await — создаем задачу внутри текущего event loop
-    asyncio.create_task(dp.feed_update(bot, update))
+    # Кидаем задачу в event loop, чтобы избежать ошибки Timeout context
+    asyncio.run_coroutine_threadsafe(dp.feed_update(bot, update), loop)
 
     return "ok", 200
 
 
-# --- Запуск ---
-async def on_startup():
-    await bot.set_webhook(f"{APP_URL}/webhook/{BOT_TOKEN}", drop_pending_updates=True)
+@app.route("/", methods=["GET"])
+def home():
+    """Главная страница"""
+    return "✅ Бот работает на Flask + Aiogram (вебхук активен)"
+
+
+# ==============================
+# 🚀 Запуск
+# ==============================
+async def main():
+    """Устанавливает webhook при старте"""
+    await bot.set_webhook(f"{APP_URL}/webhook/{BOT_TOKEN}")
     print(f"✅ Webhook установлен: {APP_URL}/webhook/{BOT_TOKEN}")
 
-def main():
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(on_startup())
-    flask_app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
 
 if __name__ == "__main__":
-    main()
+    # Запуск event loop в отдельном потоке
+    from threading import Thread
+
+    loop.create_task(main())
+    Thread(target=loop.run_forever, daemon=True).start()
+
+    print("🚀 Flask-сервер запущен на Render...")
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
