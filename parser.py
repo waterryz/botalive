@@ -74,6 +74,7 @@ async def get_journal_with_cookie(cookie: str):
             except Exception as e:
                 results.append(f"{subject}: ⚠️ Ошибка ({e})")
 
+        # ✅ Возвращаем как строку, а не список!
         return "\n".join(results)
 
 
