@@ -1,82 +1,92 @@
-import asyncio
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from parser import get_journal_with_cookie, extract_grades_from_html
-from db import init_db, save_cookie, get_cookie
 import os
+import json
+from telegram import Update
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ContextTypes, filters
+)
+from parser import get_journal_with_cookie
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+APP_URL = os.getenv("APP_URL")
 
-if not BOT_TOKEN:
-    raise ValueError("❌ Укажи BOT_TOKEN в Render Environment Variables!")
+if not BOT_TOKEN or not APP_URL:
+    raise ValueError("❌ BOT_TOKEN или APP_URL не заданы!")
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()
+COOKIE_FILE = "cookies.json"
+if not os.path.exists(COOKIE_FILE):
+    with open(COOKIE_FILE, "w") as f:
+        json.dump({}, f)
 
+def save_cookie(user_id, cookie):
+    with open(COOKIE_FILE, "r+") as f:
+        data = json.load(f)
+        data[str(user_id)] = cookie
+        f.seek(0)
+        json.dump(data, f)
+        f.truncate()
 
-@dp.message(Command("start"))
-async def start_command(message: types.Message):
-    await message.answer(
-        "👋 Сәлем! / Привет!\n\n"
-        "Бұл бот Snation College сайтындағы журналдан бағаларды көрсетеді.\n"
-        "Чтобы начать, отправь свою *cookie* строку (например):\n\n"
-        "`laravel_session=...; XSRF-TOKEN=...`\n\n"
-        "Cookie можно получить из браузера (инструкция появится позже).",
+def load_cookie(user_id):
+    with open(COOKIE_FILE, "r") as f:
+        data = json.load(f)
+        return data.get(str(user_id))
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👋 Привет! Отправь свою cookie (например, `college_session=...; XSRF-TOKEN=...`), "
+        "и я покажу твои оценки.",
         parse_mode="Markdown"
     )
 
+async def handle_cookie(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    cookie_string = update.message.text.strip()
 
-@dp.message(Command("refresh"))
-async def refresh_command(message: types.Message):
-    user_id = message.from_user.id
-    cookie = get_cookie(user_id)
+    save_cookie(user_id, cookie_string)
+    await update.message.reply_text("🔐 Cookie получена, проверяю...")
 
-    if not cookie:
-        await message.answer("⚠️ Cookie не найдена! Отправь её снова.")
+    html = await get_journal_with_cookie(cookie_string)
+
+    if isinstance(html, list):  # если вернулся список — преобразуем в строку
+        html = "\n".join(map(str, html))
+
+    if not isinstance(html, str) or not html.strip():
+        await update.message.reply_text("❌ Cookie неверна или устарела.")
         return
 
-    await message.answer("♻️ Обновляю данные журнала...")
+    await update.message.reply_text(html, parse_mode="Markdown")
 
-    try:
-        html = await get_journal_with_cookie(cookie)
-        if not html:
-            await message.answer("❌ Cookie устарела или недействительна. Отправь новую.")
-            return
+async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.message.from_user.id
+    cookie = load_cookie(user_id)
 
-        grades = extract_grades_from_html(html)
-        await message.answer(grades, parse_mode="Markdown")
+    if not cookie:
+        await update.message.reply_text("⚠️ У тебя нет сохранённой cookie. Отправь её снова.")
+        return
 
-    except Exception as e:
-        await message.answer(f"⚠️ Қате орын алды / Произошла ошибка: {e}")
+    await update.message.reply_text("♻️ Обновляю данные журнала...")
 
+    html = await get_journal_with_cookie(cookie)
 
-@dp.message()
-async def handle_cookie(message: types.Message):
-    try:
-        cookie = message.text.strip()
-        user_id = message.from_user.id
+    if isinstance(html, list):
+        html = "\n".join(map(str, html))
 
-        await message.answer("🔐 Cookie получена, проверяю...")
+    if not isinstance(html, str) or not html.strip():
+        await update.message.reply_text("❌ Cookie устарела, отправь новую.")
+        return
 
-        html = await get_journal_with_cookie(cookie)
-        if not html:
-            await message.answer("❌ Cookie неверна или устарела.")
-            return
-
-        save_cookie(user_id, cookie)
-
-        grades = extract_grades_from_html(html)
-        await message.answer(grades, parse_mode="Markdown")
-
-    except Exception as e:
-        await message.answer(f"⚠️ Қате орын алды / Произошла ошибка: {e}")
-
-
-async def main():
-    print("🤖 Бот успешно запущен (polling mode)...")
-    init_db()
-    await dp.start_polling(bot)
-
+    await update.message.reply_text(html, parse_mode="Markdown")
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    print("🚀 Запуск Telegram-бота (polling mode)...")
+
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("refresh", refresh))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_cookie))
+
+    app.run_polling(drop_pending_updates=True)
