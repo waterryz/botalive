@@ -5,7 +5,6 @@ from datetime import datetime
 BASE_URL = "https://college.snation.kz"
 JOURNAL_LIST_URL = f"{BASE_URL}/kz/tko/control/journals"
 
-
 async def get_journal_with_cookie(cookie: str):
     """
     Получает HTML всех журналов для пользователя по cookie.
@@ -61,9 +60,6 @@ async def get_journal_with_cookie(cookie: str):
                     results.append(f"{subject}: ⚠️ Ошибка {r.status_code}")
                     continue
 
-                # Лог: первые 200 символов ответа (для теста)
-                print(f"[DEBUG] {subject}: {r.text[:200]}")
-
                 grades = extract_grades_from_html(r.text)
                 if grades:
                     avg = round(sum(map(int, grades)) / len(grades), 1)
@@ -74,9 +70,7 @@ async def get_journal_with_cookie(cookie: str):
             except Exception as e:
                 results.append(f"{subject}: ⚠️ Ошибка ({e})")
 
-        # ✅ Возвращаем как строку, а не список!
         return "\n".join(results)
-
 
 def extract_grades_from_html(html: str):
     """
