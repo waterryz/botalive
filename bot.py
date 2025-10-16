@@ -77,9 +77,13 @@ async def refresh(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === Запуск приложения ===
 if __name__ == "__main__":
-    print("🚀 Запуск Telegram-бота через Webhook на Render...")
+    print("🚀 Запуск Telegram-бота на Render...")
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("refresh", refresh))
@@ -88,6 +92,8 @@ if __name__ == "__main__":
     app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8080)),
+        url_path=f"{BOT_TOKEN}",
         webhook_url=f"{APP_URL}/webhook/{BOT_TOKEN}",
         drop_pending_updates=True,
     )
+
