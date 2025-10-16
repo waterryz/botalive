@@ -77,8 +77,12 @@ def home():
 async def webhook():
     data = request.get_json(force=True)
     update = types.Update(**data)
-    await dp.feed_update(bot, update)
+
+    # Вместо await — создаем задачу внутри текущего event loop
+    asyncio.create_task(dp.feed_update(bot, update))
+
     return "ok", 200
+
 
 # --- Запуск ---
 async def on_startup():
